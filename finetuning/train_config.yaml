@@ -1,0 +1,47 @@
+# Lean Ultralytics fine-tuning config for this PC.
+# This machine currently has no CUDA device available, so these defaults are CPU-friendly.
+# Use with:
+# python -m ultralytics train cfg=finetuning/train_config.yaml
+
+model: yolo26s.pt
+data: finetuning/data.yaml
+
+epochs: 60 # Reasonable starting point for fine-tuning without making CPU training excessively long.
+patience: 10 # Stop early if validation does not improve.
+batch: 2 # Conservative for a CPU-only run.
+imgsz: 640 # Much lighter than 1280 and still a solid baseline.
+
+device: cpu # Forced because CUDA is not available in the current environment.
+workers: 2 # Lower worker count is usually more stable on Windows and avoids overspending CPU threads.
+project: finetuning/runs
+name: yolo26s_finetune
+exist_ok: true
+
+optimizer: auto
+pretrained: true
+cos_lr: true # Smoother learning-rate decay for fine-tuning.
+freeze: 10 # Freeze early backbone layers to reduce training cost and overfitting risk on smaller custom datasets.
+amp: false # Mixed precision is mainly useful on GPU, so disable it for CPU.
+cache: false
+plots: true
+val: true
+
+lr0: 0.003 # Slightly lower start LR is safer when adapting an already-trained checkpoint.
+lrf: 0.01
+weight_decay: 0.0005
+warmup_epochs: 2.0
+
+hsv_h: 0.015 # Hue jitter.
+hsv_s: 0.5 # Saturation jitter.
+hsv_v: 0.3 # Brightness jitter.
+degrees: 10.0 # Small rotation helps camera-angle robustness without distorting objects too much.
+translate: 0.08 # Small random shifts.
+scale: 0.3 # Mild zoom in/out.
+shear: 0.5 # Mild shear only.
+perspective: 0.0 # Keep off unless you know viewpoint distortion is a real issue.
+flipud: 0.0 # Vertical flips are usually wrong for this type of imagery.
+fliplr: 0.5 # Horizontal flips are usually safe.
+mosaic: 0.3 # Some augmentation, but lighter than the default to preserve more natural images.
+mixup: 0.0 # Off by default; can hurt detection quality on small custom datasets.
+erasing: 0.1 # Mild occlusion robustness.
+close_mosaic: 10 # Turn mosaic off near the end of training.
