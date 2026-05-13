@@ -1,4 +1,4 @@
-from WebcamOperations import WebcamStream
+from modules import WebcamStream
 
 
 if __name__ == "__main__":

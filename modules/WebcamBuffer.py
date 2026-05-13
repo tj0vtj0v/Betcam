@@ -3,14 +3,14 @@ import time
 from collections import deque
 from typing import Deque, Optional, Tuple
 
-from WebcamOperations.config.config import (
+from config.config import (
     MAX_BUFFER_SIZE,
     MAX_DISPLAY_DELAY_MS,
     MIN_DISPLAY_DELAY_MS,
     QUEUE_SAMPLE_WINDOW_SECONDS,
     TARGET_BUFFER_SIZE,
 )
-from WebcamOperations.config.types import Frame, QueueSample
+from config.types import Frame, QueueSample
 
 
 class WebcamBuffer:

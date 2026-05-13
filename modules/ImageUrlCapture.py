@@ -5,7 +5,7 @@ from urllib.request import Request, urlopen
 import cv2
 import numpy as np
 
-from WebcamOperations.config.types import Frame
+from config.types import Frame
 
 
 class ImageUrlCapture:
