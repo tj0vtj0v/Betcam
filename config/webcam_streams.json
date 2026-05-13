@@ -1,0 +1,53 @@
+{
+  "Deggendorf": {
+    "Amanda": {
+      "2592x1944": "https://live22.deg.net/17/livestream_0.m3u8",
+      "1024x768": "https://live22.deg.net/17/livestream_1.m3u8",
+      "640x480": "https://live22.deg.net/17/livestream_2.m3u8"
+    },
+    "Alt-Hafen": {
+      "1280x960": "https://live22.deg.net/18/livestream_1.m3u8",
+      "640x480": "https://live22.deg.net/18/livestream_0.m3u8"
+    },
+    "Graflinger Tal": {
+      "1280x960": "https://live22.deg.net/20/livestream_1.m3u8",
+      "640x480": "https://live22.deg.net/20/livestream_0.m3u8"
+    },
+    "Schaching": {
+      "1280x960": "https://live22.deg.net/21/livestream_1.m3u8",
+      "640x480": "https://live22.deg.net/21/livestream_0.m3u8"
+    },
+    "Hafen": {
+      "1280x960": "https://live22.deg.net/22/livestream_1.m3u8",
+      "640x480": "https://live22.deg.net/22/livestream_0.m3u8"
+    },
+    "Vorstadt": {
+      "1280x960": "https://live22.deg.net/23/livestream_1.m3u8",
+      "640x480": "https://live22.deg.net/23/livestream_0.m3u8"
+    },
+    "Stadtmitte": {
+      "1280x960": "https://live22.deg.net/24/livestream_1.m3u8",
+      "640x480": "https://live22.deg.net/24/livestream_0.m3u8"
+    },
+    "Luitpoldplatz": {
+      "1280x960": "https://live22.deg.net/25/livestream_1.m3u8",
+      "640x480": "https://live22.deg.net/25/livestream_0.m3u8"
+    },
+    "Oberer Stadtplatz": {
+      "1280x960": "https://live22.deg.net/26/livestream_1.m3u8",
+      "640x480": "https://live22.deg.net/26/livestream_0.m3u8"
+    }
+  },
+  "Plattling": {
+    "Bahnhof": {
+      "1280x960": "https://live22.deg.net/27/livestream_1.m3u8",
+      "640x480": "https://live22.deg.net/27/livestream_0.m3u8"
+    }
+  },
+  "Straubing": {
+    "Bahnhof": {
+      "1280x960": "https://live22.deg.net/29/livestream_1.m3u8",
+      "640x480": "https://live22.deg.net/29/livestream_0.m3u8"
+    }
+  }
+}
