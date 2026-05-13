@@ -10,12 +10,12 @@ from config.config import (
     QUEUE_SAMPLE_WINDOW_SECONDS,
     TARGET_BUFFER_SIZE,
 )
-from config.types import Frame, QueueSample
+from config.types import QueueSample, StreamFrame
 
 
 class WebcamBuffer:
     def __init__(self, max_size: int = MAX_BUFFER_SIZE) -> None:
-        self.frames: Deque[Frame] = deque(maxlen=max_size)
+        self.frames: Deque[StreamFrame] = deque(maxlen=max_size)
         self.queue_size_samples: Deque[QueueSample] = deque()
         self.lock = threading.Lock()
 
@@ -25,28 +25,32 @@ class WebcamBuffer:
         with self.lock:
             self.frames.clear()
 
-    def append(self, frame: Frame) -> None:
+    def append(self, frame: StreamFrame) -> None:
         with self.lock:
             self.frames.append(frame)
 
-    def pop(self) -> Tuple[Optional[Frame], int]:
+    def pop(self) -> Tuple[Optional[StreamFrame], int]:
         with self.lock:
             frame = self.frames.popleft() if self.frames else None
             queue_size = len(self.frames)
 
         return frame, queue_size
 
-    def read(self) -> Optional[Frame]:
+    def read(self) -> Optional[StreamFrame]:
         frame, _ = self.pop()
         return frame
 
     def calculate_display_delay(self, queue_size: int) -> int:
+        display_delay, _ = self.calculate_display_delay_stats(queue_size)
+        return display_delay
+
+    def calculate_display_delay_stats(self, queue_size: int) -> Tuple[int, float]:
         current_time = time.monotonic()
         self.queue_size_samples.append((current_time, queue_size))
         self.remove_old_queue_samples(self.queue_size_samples, current_time)
 
         average_queue_size = self.calculate_average_queue_size(self.queue_size_samples)
-        return self.average_queue_size_to_interframe_delay(average_queue_size)
+        return self.average_queue_size_to_interframe_delay(average_queue_size), average_queue_size
 
     @staticmethod
     def average_queue_size_to_interframe_delay(average_queue_size: float) -> int:

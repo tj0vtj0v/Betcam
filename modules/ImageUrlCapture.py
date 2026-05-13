@@ -5,7 +5,7 @@ from urllib.request import Request, urlopen
 import cv2
 import numpy as np
 
-from config.types import Frame
+from config.types import RawFrame
 
 
 class ImageUrlCapture:
@@ -13,13 +13,13 @@ class ImageUrlCapture:
         self.url = url
         self.refresh_seconds = refresh_seconds
         self._last_fetch_time = 0.0
-        self._latest_frame: Optional[Frame] = None
+        self._latest_frame: Optional[RawFrame] = None
         self._is_open = True
 
     def isOpened(self) -> bool:
         return self._is_open
 
-    def read(self) -> Tuple[bool, Optional[Frame]]:
+    def read(self) -> Tuple[bool, Optional[RawFrame]]:
         if not self._is_open:
             return False, None
 

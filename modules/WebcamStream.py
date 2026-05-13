@@ -1,15 +1,20 @@
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any, Iterable, List, Optional, Tuple
 
 import cv2
 
+from modules.DetectionAnnotator import DetectionAnnotator
+from modules.DebugPlotter import DebugPlotter
 from modules.ImageUrlCapture import ImageUrlCapture
+from modules.ObjectDetector import TrackedObjectDetector
+from modules.Snapshotter import Snapshotter
 from modules.WebcamBuffer import WebcamBuffer
 from config.config import MAX_BUFFER_SIZE
 from config.stream_config import load_webcam_streams
-from config.types import Frame
+from config.types import RawFrame, StreamFrame
 
 
 class WebcamStream:
@@ -21,15 +26,30 @@ class WebcamStream:
         *,
         window_name: Optional[str] = None,
         max_buffer_size: int = MAX_BUFFER_SIZE,
+        detector: Optional[TrackedObjectDetector] = None,
+        annotator: Optional[DetectionAnnotator] = None,
+        debug_plotter: Optional[DebugPlotter] = None,
+        snapshotter: Optional[Snapshotter] = None,
+        town: Optional[str] = None,
+        location: Optional[str] = None,
     ) -> None:
         self.url = url
         self.window_name = window_name or url
         self.buffer = WebcamBuffer(max_buffer_size)
+        self.detector = detector
+        self.annotator = annotator or DetectionAnnotator()
+        self.debug_plotter = debug_plotter
+        self.snapshotter = snapshotter or Snapshotter()
+        self.town = town
+        self.location = location
         self.stop_event = threading.Event()
         self.capture: Optional[Any] = None
         self.reader_thread: Optional[threading.Thread] = None
         self.display_thread: Optional[threading.Thread] = None
         self.last_error: Optional[BaseException] = None
+        self.display_started_at: Optional[float] = None
+        self.latest_stream_frame: Optional[StreamFrame] = None
+        self.latest_stream_frame_lock = threading.Lock()
 
     @classmethod
     def from_storage(
@@ -40,6 +60,10 @@ class WebcamStream:
         *,
         window_name: Optional[str] = None,
         max_buffer_size: int = MAX_BUFFER_SIZE,
+        detector: Optional[TrackedObjectDetector] = None,
+        annotator: Optional[DetectionAnnotator] = None,
+        debug_plotter: Optional[DebugPlotter] = None,
+        snapshotter: Optional[Snapshotter] = None,
     ) -> "WebcamStream":
         stream_url = load_webcam_streams()[town][location][resolution]
         generic_window_name = f"{town} - {location} ({resolution})"
@@ -47,6 +71,12 @@ class WebcamStream:
             stream_url,
             window_name=window_name or generic_window_name,
             max_buffer_size=max_buffer_size,
+            detector=detector,
+            annotator=annotator,
+            debug_plotter=debug_plotter,
+            snapshotter=snapshotter,
+            town=town,
+            location=location,
         )
 
     def __enter__(self) -> "WebcamStream":
@@ -68,6 +98,8 @@ class WebcamStream:
         self.capture = self.open_stream(self.url)
         self.stop_event.clear()
         self.buffer.clear()
+        if self.detector is not None:
+            self.detector.reset()
 
         self.reader_thread = threading.Thread(
             target=self._read_frames_into_buffer,
@@ -88,12 +120,26 @@ class WebcamStream:
             self.capture = None
 
         self.buffer.clear()
+        self._clear_latest_stream_frame()
+        self._close_debug_plot()
 
-    def read(self) -> Optional[Frame]:
+    def read(self) -> Optional[StreamFrame]:
         if not self.is_open:
             self.open()
 
         return self.buffer.read()
+
+    def snapshot(self, *, annotated: bool = True) -> Optional[Path]:
+        stream_frame = self._latest_stream_frame()
+        if stream_frame is None:
+            raise RuntimeError("No frame available for snapshot yet.")
+
+        return self.snapshotter.save(
+            stream_frame,
+            town=self.town,
+            location=self.location,
+            annotated=annotated,
+        )
 
     def show(self) -> None:
         window_created = False
@@ -102,6 +148,8 @@ class WebcamStream:
             self.open()
 
         try:
+            self.display_started_at = time.monotonic()
+            self._ensure_debug_plot()
             with self._highgui_lock:
                 cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
             window_created = True
@@ -200,12 +248,18 @@ class WebcamStream:
             if threading.current_thread() is self.display_thread:
                 self.display_thread = None
 
-    def _next_display_frame(self) -> Tuple[Optional[Frame], int]:
+    def _next_display_frame(self) -> Tuple[Optional[RawFrame], int]:
         iteration_start_time = time.monotonic()
-        current_frame, current_queue_size = self.buffer.pop()
-        target_delay_ms = self.buffer.calculate_display_delay(current_queue_size)
+        current_stream_frame, current_queue_size = self.buffer.pop()
+        target_delay_ms, average_queue_size = self.buffer.calculate_display_delay_stats(current_queue_size)
         iteration_runtime_ms = (time.monotonic() - iteration_start_time) * 1000
         wait_time_ms = max(1, target_delay_ms - round(iteration_runtime_ms))
+        current_frame = None if current_stream_frame is None else current_stream_frame.annotated_frame
+        self._update_debug_plot(
+            queue_size=current_queue_size,
+            average_queue_size=average_queue_size,
+            delay_ms=wait_time_ms,
+        )
 
         return current_frame, wait_time_ms
 
@@ -219,7 +273,81 @@ class WebcamStream:
                 time.sleep(0.05)
                 continue
 
-            self.buffer.append(frame)
+            stream_frame = self._build_stream_frame(frame)
+            self._store_latest_stream_frame(stream_frame)
+            self._snapshot_current_frame(stream_frame)
+            self.buffer.append(stream_frame)
+
+    def _build_stream_frame(self, frame: RawFrame) -> StreamFrame:
+        timestamp = time.monotonic()
+        detections = ()
+        active_trails = ()
+        annotated_frame = frame
+
+        if self.detector is not None:
+            detections = self.detector.detect(frame, timestamp=timestamp)
+            active_trails = self.detector.active_trails(timestamp=timestamp)
+            annotated_frame = self.annotator.annotate(frame, detections, active_trails)
+
+        return StreamFrame(
+            raw_frame=frame,
+            annotated_frame=annotated_frame,
+            detections=detections,
+            active_trails=active_trails,
+            timestamp=timestamp,
+        )
+
+    def _ensure_debug_plot(self) -> None:
+        if self.debug_plotter is None:
+            return
+
+        self.debug_plotter.open(
+            window_name=f"{self.window_name} Debug",
+            maximum_buffer_size=self.buffer.frames.maxlen or MAX_BUFFER_SIZE,
+        )
+
+    def _update_debug_plot(self, *, queue_size: int, average_queue_size: float, delay_ms: int) -> None:
+        if self.debug_plotter is None or self.display_started_at is None:
+            return
+
+        elapsed_time_seconds = time.monotonic() - self.display_started_at
+        self.debug_plotter.update(
+            elapsed_time_seconds=elapsed_time_seconds,
+            queue_size=queue_size,
+            average_queue_size=average_queue_size,
+            delay_ms=delay_ms,
+        )
+
+    def _close_debug_plot(self) -> None:
+        if self.debug_plotter is None:
+            return
+
+        self.debug_plotter.close()
+        self.display_started_at = None
+
+    def _store_latest_stream_frame(self, stream_frame: StreamFrame) -> None:
+        with self.latest_stream_frame_lock:
+            self.latest_stream_frame = stream_frame
+
+    def _latest_stream_frame(self) -> Optional[StreamFrame]:
+        with self.latest_stream_frame_lock:
+            return self.latest_stream_frame
+
+    def _clear_latest_stream_frame(self) -> None:
+        with self.latest_stream_frame_lock:
+            self.latest_stream_frame = None
+
+    def _snapshot_current_frame(self, stream_frame: StreamFrame) -> None:
+        try:
+            self.snapshotter.save(
+                stream_frame,
+                town=self.town,
+                location=self.location,
+                annotated=False,
+            )
+        except Exception as error:
+            self.last_error = error
+            print(f"Could not save snapshot for webcam stream '{self.window_name}': {error}", file=sys.stderr)
 
     @staticmethod
     def is_image_url(url: str) -> bool:
@@ -242,7 +370,7 @@ class WebcamStream:
         return video_capture
 
     @staticmethod
-    def read_frame(capture: Any) -> Optional[Frame]:
+    def read_frame(capture: Any) -> Optional[RawFrame]:
         frame_available, frame = capture.read()
         if not frame_available:
             return None
