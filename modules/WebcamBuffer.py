@@ -20,9 +20,8 @@ class WebcamBuffer:
         self.lock = threading.Lock()
 
     def clear(self) -> None:
-        self.queue_size_samples.clear()
-
         with self.lock:
+            self.queue_size_samples.clear()
             self.frames.clear()
 
     def append(self, frame: StreamFrame) -> None:
@@ -45,11 +44,12 @@ class WebcamBuffer:
         return display_delay
 
     def calculate_display_delay_stats(self, queue_size: int) -> Tuple[int, float]:
-        current_time = time.monotonic()
-        self.queue_size_samples.append((current_time, queue_size))
-        self.remove_old_queue_samples(self.queue_size_samples, current_time)
+        with self.lock:
+            current_time = time.monotonic()
+            self.queue_size_samples.append((current_time, queue_size))
+            self.remove_old_queue_samples(self.queue_size_samples, current_time)
+            average_queue_size = self.calculate_average_queue_size(self.queue_size_samples)
 
-        average_queue_size = self.calculate_average_queue_size(self.queue_size_samples)
         return self.average_queue_size_to_interframe_delay(average_queue_size), average_queue_size
 
     @staticmethod

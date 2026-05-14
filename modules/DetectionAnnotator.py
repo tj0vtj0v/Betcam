@@ -30,6 +30,14 @@ class DetectionAnnotator:
         self.trail_thickness = trail_thickness
         self.trail_point_fade_frames = trail_point_fade_frames
 
+    def clone(self) -> "DetectionAnnotator":
+        return DetectionAnnotator(
+            show_labels=self.show_labels,
+            label_font_scale=self.label_font_scale,
+            trail_thickness=self.trail_thickness,
+            trail_point_fade_frames=self.trail_point_fade_frames,
+        )
+
     def annotate(
         self,
         frame: RawFrame,
