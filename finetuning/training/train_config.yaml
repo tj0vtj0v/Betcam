@@ -1,0 +1,46 @@
+# Lean Ultralytics fine-tuning config for an RTX 4070 Ti class GPU.
+# Use with:
+# python finetuning/training/train_model.py
+
+model_variant: 26s
+
+data: finetuning/training/data.yaml
+
+epochs: 100 # Longer schedule makes better use of the GPU while still allowing early stopping.
+patience: 20 # Give validation more time before stopping on temporary plateaus.
+batch: 12 # Strong default for a 12 GB RTX 4070 Ti with a small YOLO variant at 960 px.
+imgsz: 960 # Better small-object detail than 640 without the training cost of 1280.
+
+device: 0 # Use the first CUDA device.
+workers: 8 # Keep the GPU fed without oversubscribing Windows too aggressively.
+project: finetuning/training/runs
+exist_ok: true
+
+optimizer: AdamW
+pretrained: true
+cos_lr: true # Smoother learning-rate decay for fine-tuning.
+freeze: 0 # Let the full model adapt; the GPU can handle it and this usually beats partial freezing for domain shift.
+amp: true # Mixed precision improves throughput and memory use on NVIDIA GPUs.
+cache: ram # Faster epoch-to-epoch training if the dataset fits in system memory.
+plots: true
+val: true
+
+lr0: 0.0005
+lrf: 0.05
+weight_decay: 0.0005
+warmup_epochs: 3.0
+close_mosaic: 10 # Turn mosaic off near the end so the model finishes on more natural images.
+
+hsv_h: 0.015 # Hue jitter.
+hsv_s: 0.5 # Saturation jitter.
+hsv_v: 0.3 # Brightness jitter.
+degrees: 5.0 # Small rotation helps camera-angle robustness without distorting objects too much.
+translate: 0.08 # Small random shifts.
+scale: 0.3 # Mild zoom in/out.
+shear: 0.5 # Mild shear only.
+perspective: 0.0 # Keep off unless you know viewpoint distortion is a real issue.
+flipud: 0.0 # Vertical flips are usually wrong for this type of imagery.
+fliplr: 0.5 # Horizontal flips are usually safe.
+mosaic: 0.5 # Stronger composition augmentation is affordable with the GPU and helps smaller datasets.
+mixup: 0.0 # Off by default; can hurt detection quality on small custom datasets.
+erasing: 0.1 # Mild occlusion robustness.

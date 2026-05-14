@@ -2,7 +2,8 @@
 
 1. Put unlabeled source images into `finetuning/to_be_labled/images/`.
 2. Label them with the classes from `finetuning/to_be_labled/labels.txt`.
-3. Or generate initial pseudo-labels by editing the constants in `finetuning/prepare_dataset.py` and then running `python finetuning/prepare_dataset.py`.
-4. Review and fix the generated labels in `finetuning/dataset/labels/{train,val}`.
-5. Adjust `finetuning/train_config.yaml` for your dataset size, GPU memory, and augmentation strategy.
-6. Train with `python -m ultralytics train cfg=finetuning/train_config.yaml`.
+3. Or generate initial pseudo-labels by editing the constants in `finetuning/data_collection/prepare_dataset.py` and then running `python finetuning/data_collection/prepare_dataset.py`.
+4. If you want to reshuffle the existing dataset and rebuild the `train`/`val` split using the configured ratio in `finetuning/data_collection/reshuffle_dataset.py`, run `python finetuning/data_collection/reshuffle_dataset.py`.
+5. Review and fix the generated labels in `finetuning/dataset/labels/{train,val}`.
+6. `finetuning/training/train_config.yaml` is now tuned for an RTX 4070 Ti class GPU. Reduce `batch` first if you hit CUDA out-of-memory errors, or raise it if you still have VRAM headroom.
+7. Train with `python finetuning/training/train_model.py`.

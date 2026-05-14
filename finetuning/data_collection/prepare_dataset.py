@@ -11,24 +11,24 @@ from ultralytics import YOLO
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
-REPO_ROOT = Path(__file__).resolve().parents[1]
-FINETUNING_DIR = REPO_ROOT / "finetuning"
+FINETUNING_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = FINETUNING_DIR.parent
 
 # Edit these constants instead of passing CLI flags.
 SOURCE_DIR = FINETUNING_DIR / "to_be_labled" / "images"
 DATASET_DIR = FINETUNING_DIR / "dataset"
-DATA_YAML_PATH = FINETUNING_DIR / "data.yaml"
-MODEL_PATH = REPO_ROOT / "yolo26s.pt"
+DATA_YAML_PATH = FINETUNING_DIR / "training" / "data.yaml"
+MODEL_PATH = REPO_ROOT / "yolo26m_1280_finetune.pt"
 
-TRAIN_RATIO = 0.8
+TRAIN_RATIO = 0.9
 SPLIT_SEED = 69
 INDEX_WIDTH = 3
 
 INFERENCE_IMGSZ = 1280
-INFERENCE_CONF = 0.1
-INFERENCE_IOU = 0.7
-INFERENCE_DEVICE = "cpu"
-INFERENCE_BATCH = 1
+INFERENCE_CONF = 0.5
+INFERENCE_IOU = 0.5
+INFERENCE_DEVICE = "auto"
+INFERENCE_BATCH = 8
 
 OVERWRITE_EXISTING = False
 
@@ -91,7 +91,7 @@ def validate_configuration() -> None:
     if not MODEL_PATH.exists():
         raise FileNotFoundError(
             f"Model checkpoint not found: {MODEL_PATH}. "
-            "Edit MODEL_PATH at the top of finetuning/prepare_dataset.py."
+            "Edit MODEL_PATH at the top of finetuning/data_collection/prepare_dataset.py."
         )
     if not 0 < TRAIN_RATIO < 1:
         raise ValueError("TRAIN_RATIO must be between 0 and 1.")
@@ -197,12 +197,14 @@ def write_labels_for_split(
     if not image_paths:
         return
 
+    resolved_device = resolve_inference_device(device)
+
     results = model.predict(
         source=[str(path) for path in image_paths],
         imgsz=imgsz,
         conf=conf,
         iou=iou,
-        device=device,
+        device=resolved_device,
         batch=batch,
         verbose=False,
     )
@@ -234,6 +236,22 @@ def format_result_lines(result: object, class_id_by_name: dict[str, int]) -> Ite
         )
 
     return lines
+
+
+def resolve_inference_device(device: str) -> str:
+    requested_device = device.strip().lower()
+    if requested_device != "auto":
+        return device
+
+    try:
+        import torch
+    except ModuleNotFoundError:
+        return "cpu"
+
+    if torch.cuda.is_available():
+        return "0"
+
+    return "cpu"
 
 
 if __name__ == "__main__":

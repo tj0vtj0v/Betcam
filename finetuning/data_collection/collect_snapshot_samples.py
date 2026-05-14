@@ -7,7 +7,7 @@ from typing import List
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOTS_DIR = REPO_ROOT / "snapshots"
 TARGET_DIR = REPO_ROOT / "finetuning" / "to_be_labled" / "images"
 
@@ -83,9 +83,39 @@ def list_images(directory: Path) -> List[Path]:
 
 def build_destination_path(*, image_path: Path, base_dir: Path, target_dir: Path) -> Path:
     relative_parts = image_path.relative_to(base_dir).parts
-    flattened_prefix = "__".join(relative_parts[:-1])
-    destination_name = f"{flattened_prefix}__{image_path.name}"
+    if len(relative_parts) < 3:
+        raise ValueError(
+            f"Expected snapshot path to include at least town and location below '{base_dir}', got '{image_path}'."
+        )
+
+    town = relative_parts[0]
+    location = relative_parts[1]
+    prefix = f"{town}__{location}"
+    next_index = next_destination_index(target_dir, prefix=prefix)
+    destination_name = f"{prefix}__{next_index:04d}{image_path.suffix.lower()}"
     return target_dir / destination_name
+
+
+def next_destination_index(target_dir: Path, *, prefix: str) -> int:
+    highest_index = -1
+
+    for existing_path in target_dir.iterdir():
+        if not existing_path.is_file():
+            continue
+        if existing_path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+        if not existing_path.stem.startswith(f"{prefix}__"):
+            continue
+
+        suffix = existing_path.stem.removeprefix(f"{prefix}__")
+        try:
+            existing_index = int(suffix)
+        except ValueError:
+            continue
+
+        highest_index = max(highest_index, existing_index)
+
+    return highest_index + 1
 
 
 if __name__ == "__main__":
