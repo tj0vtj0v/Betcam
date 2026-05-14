@@ -1,3 +1,4 @@
+## Install PyTorch separately via setup.ps1 so this project uses the CUDA build.
 numpy
 opencv-python
 ultralytics
