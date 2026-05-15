@@ -2,14 +2,14 @@
 # Use with:
 # python finetuning/training/train_model.py
 
-model_variant: 26s
+model_variant: 26m
 
 data: finetuning/training/data.yaml
 
-epochs: 100 # Longer schedule makes better use of the GPU while still allowing early stopping.
-patience: 20 # Give validation more time before stopping on temporary plateaus.
-batch: 12 # Strong default for a 12 GB RTX 4070 Ti with a small YOLO variant at 960 px.
-imgsz: 960 # Better small-object detail than 640 without the training cost of 1280.
+epochs: 200 # Longer schedule makes better use of the GPU while still allowing early stopping.
+patience: 32 # Give validation more time before stopping on temporary plateaus.
+batch: 8 # Strong default for a 12 GB RTX 4070 Ti with a small YOLO variant at 960 px.
+imgsz: 1280 # Better small-object detail than 640 without the training cost of 1280.
 
 device: 0 # Use the first CUDA device.
 workers: 8 # Keep the GPU fed without oversubscribing Windows too aggressively.
