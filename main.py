@@ -2,9 +2,9 @@ from modules import WebcamStream, TrackedObjectDetector, DetectionAnnotator, Sna
 
 if __name__ == "__main__":
     snapshotter = Snapshotter(
-        save_every_n_frames=1000
+        save_every_n_frames=100
     )
-    detector = TrackedObjectDetector(
+    default_detector = TrackedObjectDetector(  # best
         model_path="yolo26s_960_finetune.pt",
         model_input_size=1280,
         detection_confidence_threshold=0.2,
@@ -24,17 +24,17 @@ if __name__ == "__main__":
                       location,
                       "1280x960",
                       # snapshotter=snapshotter,
-                      detector=detector,
+                      detector=default_detector,
                       annotator=annotator,
                   )
                   for location in [
-            # "Alt-Hafen",
-            # "Graflinger Tal",
-            # "Schaching",
-            # "Hafen",
-            # "Vorstadt",
-            # "Stadtmitte",
-            # "Luitpoldplatz",
+            "Alt-Hafen",
+            "Graflinger Tal",
+            "Schaching",
+            "Hafen",
+            "Vorstadt",
+            "Stadtmitte",
+            "Luitpoldplatz",
             "Oberer Stadtplatz",
         ]
               ] + [
@@ -43,12 +43,76 @@ if __name__ == "__main__":
                       "Bahnhof",
                       "1280x960",
                       # snapshotter=snapshotter,
-                      # detector=detector,
+                      # detector=default_detector,
                       # annotator=annotator,
                   )
                   for town in [
             # "Plattling",
             # "Straubing"
+        ]
+              ] + [
+                  WebcamStream.from_storage(
+                      "Deggendorf",
+                      "Luitpoldplatz",
+                      "1280x960",
+                      detector=detector,
+                      annotator=annotator,
+                  )
+                  for detector in [
+            # TrackedObjectDetector( # not consistent
+            #     model_path="yolo26n_640_finetune.pt",
+            #     model_input_size=1280,
+            #     detection_confidence_threshold=0.2,
+            #     track_history_timeout_seconds=5.0,
+            #     max_inference_frame_dimension=640,
+            #     fixed_inference_frame_budget_ms=25,
+            #     max_frames_to_skip_after_inference=10
+            # ),
+            # TrackedObjectDetector( # good
+            #     model_path="yolo26n_960_finetune.pt",
+            #     model_input_size=1280,
+            #     detection_confidence_threshold=0.2,
+            #     track_history_timeout_seconds=5.0,
+            #     max_inference_frame_dimension=960,
+            #     fixed_inference_frame_budget_ms=25,
+            #     max_frames_to_skip_after_inference=10
+            # ),
+            # TrackedObjectDetector( # bad on people
+            #     model_path="yolo26s_640_finetune.pt",
+            #     model_input_size=1280,
+            #     detection_confidence_threshold=0.2,
+            #     track_history_timeout_seconds=5.0,
+            #     max_inference_frame_dimension=640,
+            #     fixed_inference_frame_budget_ms=25,
+            #     max_frames_to_skip_after_inference=10
+            # ),
+            # TrackedObjectDetector(  # best
+            #     model_path="yolo26s_960_finetune.pt",
+            #     model_input_size=1280,
+            #     detection_confidence_threshold=0.2,
+            #     track_history_timeout_seconds=5.0,
+            #     max_inference_frame_dimension=960,
+            #     fixed_inference_frame_budget_ms=25,
+            #     max_frames_to_skip_after_inference=10
+            # ),
+            # TrackedObjectDetector( # too slow
+            #     model_path="yolo26m_960_finetune.pt",
+            #     model_input_size=1280,
+            #     detection_confidence_threshold=0.2,
+            #     track_history_timeout_seconds=5.0,
+            #     max_inference_frame_dimension=960,
+            #     fixed_inference_frame_budget_ms=25,
+            #     max_frames_to_skip_after_inference=10
+            # ),
+            # TrackedObjectDetector( # holy shit
+            #     model_path="yolo26m_1280_finetune.pt",
+            #     model_input_size=1280,
+            #     detection_confidence_threshold=0.2,
+            #     track_history_timeout_seconds=5.0,
+            #     max_inference_frame_dimension=1280,
+            #     fixed_inference_frame_budget_ms=25,
+            #     max_frames_to_skip_after_inference=10
+            # )
         ]
               ]
     WebcamStream.show_many(streams)

@@ -2,8 +2,9 @@ import sys
 import threading
 import time
 import ctypes
+import multiprocessing
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import cv2
 
@@ -170,7 +171,7 @@ class WebcamStream:
 
                 with self._highgui_lock:
                     if current_frame is not None:
-                        self._draw_fps_overlay(current_frame, fps)
+                        self._draw_overlay(current_frame, fps)
                         if not window_sized:
                             self._size_window_for_frame(self.window_name, current_frame)
                             window_sized = True
@@ -184,7 +185,10 @@ class WebcamStream:
             self.close()
             if window_created:
                 with self._highgui_lock:
-                    cv2.destroyWindow(self.window_name)
+                    try:
+                        cv2.destroyWindow(self.window_name)
+                    except cv2.error:
+                        pass
             if threading.current_thread() is self.display_thread:
                 self.display_thread = None
 
@@ -195,58 +199,40 @@ class WebcamStream:
         *,
         duration_seconds: Optional[float] = None,
     ) -> None:
-        active_streams = list(streams)
-        cls._isolate_stream_contexts(active_streams)
-        end_time = time.monotonic() + duration_seconds if duration_seconds is not None else None
-        created_windows: List["WebcamStream"] = []
-        sized_windows = set()
+        stream_specs = [stream._to_process_spec() for stream in streams]
+        if not stream_specs:
+            return
+
+        process_context = multiprocessing.get_context("spawn")
+        child_processes: List[multiprocessing.Process] = []
 
         try:
-            for stream in active_streams:
-                if not stream.is_open:
-                    stream.open()
-                stream.display_started_at = time.monotonic()
-                stream._ensure_debug_plot()
-                cv2.namedWindow(stream.window_name, cv2.WINDOW_NORMAL)
-                created_windows.append(stream)
+            for stream_spec in stream_specs:
+                child_process = process_context.Process(
+                    target=_run_isolated_stream_process,
+                    args=(stream_spec, duration_seconds),
+                    daemon=False,
+                )
+                child_process.start()
+                child_processes.append(child_process)
 
-            while active_streams and not any(stream.stop_event.is_set() for stream in active_streams):
-                wait_times_ms: List[int] = []
+            while child_processes:
+                active_processes = []
 
-                for stream in active_streams[:]:
-                    if cls._window_was_closed(stream.window_name):
-                        stream.stop_event.set()
-                        active_streams.remove(stream)
-                        stream.close()
-                        continue
+                for child_process in child_processes:
+                    child_process.join(timeout=0.1)
+                    if child_process.is_alive():
+                        active_processes.append(child_process)
 
-                    current_frame, wait_time_ms, fps = stream._next_display_frame()
-                    wait_times_ms.append(wait_time_ms)
-
-                    if current_frame is not None:
-                        cls._draw_fps_overlay(current_frame, fps)
-                        if stream.window_name not in sized_windows:
-                            cls._size_window_for_frame(stream.window_name, current_frame)
-                            sized_windows.add(stream.window_name)
-                        cv2.imshow(stream.window_name, current_frame)
-
-                key = cv2.waitKey(min(wait_times_ms, default=1)) & 0xFF
-                if key == ord("q"):
-                    for stream in active_streams:
-                        stream.stop_event.set()
-                    break
-                if end_time is not None and time.monotonic() >= end_time:
-                    for stream in active_streams:
-                        stream.stop_event.set()
-                    break
+                child_processes = active_processes
+        except KeyboardInterrupt:
+            pass
         finally:
-            for stream in active_streams:
-                stream.close()
-            for stream in created_windows:
-                try:
-                    cv2.destroyWindow(stream.window_name)
-                except cv2.error:
-                    pass
+            for child_process in child_processes:
+                if child_process.is_alive():
+                    child_process.terminate()
+            for child_process in child_processes:
+                child_process.join(timeout=2)
 
     def show_async(self) -> threading.Thread:
         if self.display_thread is not None and self.display_thread.is_alive():
@@ -269,6 +255,70 @@ class WebcamStream:
         finally:
             if threading.current_thread() is self.display_thread:
                 self.display_thread = None
+
+    def _to_process_spec(self) -> Dict[str, Any]:
+        return {
+            "url": self.url,
+            "window_name": self.window_name,
+            "max_buffer_size": self.buffer.frames.maxlen or MAX_BUFFER_SIZE,
+            "town": self.town,
+            "location": self.location,
+            "detector": self._detector_process_spec(),
+            "annotator": self._annotator_process_spec(),
+            "debug_plotter": self._debug_plotter_process_spec(),
+            "snapshotter": self._snapshotter_process_spec(),
+        }
+
+    def _detector_process_spec(self) -> Optional[Dict[str, Any]]:
+        if self.detector is None:
+            return None
+
+        return {
+            "model_path": self.detector.model_path,
+            "inference_device": self.detector.inference_device,
+            "model_input_size": self.detector.model_input_size,
+            "detection_confidence_threshold": self.detector.detection_confidence_threshold,
+            "tracker_config_path": self.detector.tracker_config_path,
+            "detection_start_delay_seconds": self.detector.detection_start_delay_seconds,
+            "track_history_timeout_seconds": self.detector.track_history_timeout_seconds,
+            "max_track_history_points": self.detector.max_track_history_points,
+            "max_inference_frame_dimension": self.detector.max_inference_frame_dimension,
+            "fixed_inference_frame_budget_ms": self.detector.fixed_inference_frame_budget_ms,
+            "max_frames_to_skip_after_inference": self.detector.max_frames_to_skip_after_inference,
+            "inference_time_ema_alpha": self.detector.inference_time_ema_alpha,
+            "same_class_iou_suppression_threshold": self.detector.same_class_iou_suppression_threshold,
+            "allowed_class_names": tuple(self.detector.allowed_class_names),
+        }
+
+    def _annotator_process_spec(self) -> Optional[Dict[str, Any]]:
+        if self.annotator is None:
+            return None
+
+        return {
+            "show_labels": self.annotator.show_labels,
+            "label_font_scale": self.annotator.label_font_scale,
+            "trail_thickness": self.annotator.trail_thickness,
+            "trail_point_fade_frames": self.annotator.trail_point_fade_frames,
+        }
+
+    def _debug_plotter_process_spec(self) -> Optional[Dict[str, Any]]:
+        if self.debug_plotter is None:
+            return None
+
+        return {
+            "maximum_display_delay_ms": self.debug_plotter.maximum_display_delay_ms,
+            "queue_sample_window_seconds": self.debug_plotter.queue_sample_window_seconds,
+        }
+
+    def _snapshotter_process_spec(self) -> Optional[Dict[str, Any]]:
+        if self.snapshotter is None:
+            return None
+
+        return {
+            "base_directory": str(self.snapshotter.base_directory),
+            "save_every_n_frames": self.snapshotter.save_every_n_frames,
+            "scale_factor": self.snapshotter.scale_factor,
+        }
 
     @staticmethod
     def _isolate_stream_contexts(streams: Iterable["WebcamStream"]) -> None:
@@ -488,16 +538,121 @@ class WebcamStream:
         except (AttributeError, OSError):
             return None
 
-    @staticmethod
-    def _draw_fps_overlay(frame: RawFrame, fps: float) -> None:
-        label = f"{fps:.1f} FPS"
+    def _draw_overlay(self, frame: RawFrame, fps: float) -> None:
+        fps_label = f"{fps:.1f} FPS"
+        model_label = None
+        if self.detector is not None:
+            model_label = Path(self.detector.model_path).name
+
         _, frame_width = frame.shape[:2]
         origin_x = round(frame_width * 0.6)
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.8
-        thickness = 2
-        text_size, _ = cv2.getTextSize(label, font, font_scale, thickness)
-        origin_y = 2 + text_size[1]
+        fps_font_scale = 0.5
+        fps_thickness = 1
+        fps_text_size, _ = cv2.getTextSize(fps_label, font, fps_font_scale, fps_thickness)
+        fps_origin_y = 2 + fps_text_size[1]
 
-        cv2.putText(frame, label, (origin_x, origin_y), font, font_scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
-        cv2.putText(frame, label, (origin_x, origin_y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+        cv2.putText(
+            frame,
+            fps_label,
+            (origin_x, fps_origin_y),
+            font,
+            fps_font_scale,
+            (0, 0, 0),
+            fps_thickness + 2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            fps_label,
+            (origin_x, fps_origin_y),
+            font,
+            fps_font_scale,
+            (255, 255, 255),
+            fps_thickness,
+            cv2.LINE_AA,
+        )
+
+        if model_label is None:
+            return
+
+        model_font_scale = 0.5
+        model_thickness = 1
+        model_origin_y = fps_origin_y + 8 + cv2.getTextSize(model_label, font, model_font_scale, model_thickness)[0][1]
+        cv2.putText(
+            frame,
+            model_label,
+            (origin_x, model_origin_y),
+            font,
+            model_font_scale,
+            (0, 0, 0),
+            model_thickness + 2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            model_label,
+            (origin_x, model_origin_y),
+            font,
+            model_font_scale,
+            (255, 255, 255),
+            model_thickness,
+            cv2.LINE_AA,
+        )
+
+
+def _run_isolated_stream_process(stream_spec: Dict[str, Any], duration_seconds: Optional[float]) -> None:
+    detector = _build_detector_from_process_spec(stream_spec.get("detector"))
+    annotator = _build_annotator_from_process_spec(stream_spec.get("annotator"))
+    debug_plotter = _build_debug_plotter_from_process_spec(stream_spec.get("debug_plotter"))
+    snapshotter = _build_snapshotter_from_process_spec(stream_spec.get("snapshotter"))
+    stream = WebcamStream(
+        stream_spec["url"],
+        window_name=stream_spec.get("window_name"),
+        max_buffer_size=stream_spec.get("max_buffer_size", MAX_BUFFER_SIZE),
+        detector=detector,
+        annotator=annotator,
+        debug_plotter=debug_plotter,
+        snapshotter=snapshotter,
+        town=stream_spec.get("town"),
+        location=stream_spec.get("location"),
+    )
+    stop_timer: Optional[threading.Timer] = None
+
+    try:
+        if duration_seconds is not None:
+            stop_timer = threading.Timer(duration_seconds, stream.stop_event.set)
+            stop_timer.daemon = True
+            stop_timer.start()
+        stream.show()
+    finally:
+        if stop_timer is not None:
+            stop_timer.cancel()
+
+
+def _build_detector_from_process_spec(detector_spec: Optional[Dict[str, Any]]) -> Optional[TrackedObjectDetector]:
+    if detector_spec is None:
+        return None
+
+    return TrackedObjectDetector(**detector_spec)
+
+
+def _build_annotator_from_process_spec(annotator_spec: Optional[Dict[str, Any]]) -> Optional[DetectionAnnotator]:
+    if annotator_spec is None:
+        return None
+
+    return DetectionAnnotator(**annotator_spec)
+
+
+def _build_debug_plotter_from_process_spec(debug_plotter_spec: Optional[Dict[str, Any]]) -> Optional[DebugPlotter]:
+    if debug_plotter_spec is None:
+        return None
+
+    return DebugPlotter(**debug_plotter_spec)
+
+
+def _build_snapshotter_from_process_spec(snapshotter_spec: Optional[Dict[str, Any]]) -> Optional[Snapshotter]:
+    if snapshotter_spec is None:
+        return None
+
+    return Snapshotter(**snapshotter_spec)
