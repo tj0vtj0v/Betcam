@@ -1,4 +1,4 @@
-from modules import WebcamStream, TrackedObjectDetector, DetectionAnnotator, Snapshotter
+from modules import WebcamStream, TrackedObjectDetector, DetectionAnnotator, Snapshotter, DifferenceFilter
 
 if __name__ == "__main__":
     snapshotter = Snapshotter(
@@ -17,6 +17,11 @@ if __name__ == "__main__":
         show_labels=False,
         trail_point_fade_frames=100
     )
+    default_filter = DifferenceFilter(
+        mode="display_only",
+        nth_last_image=1,
+        grayscale_output=True,
+    )
 
     streams = [
                   WebcamStream.from_storage(
@@ -24,25 +29,26 @@ if __name__ == "__main__":
                       location,
                       "1280x960",
                       # snapshotter=snapshotter,
+                      filter=default_filter,
                       detector=default_detector,
                       annotator=annotator,
                   )
                   for location in [
-            "Alt-Hafen",
-            "Graflinger Tal",
-            "Schaching",
-            "Hafen",
-            "Vorstadt",
-            "Stadtmitte",
-            "Luitpoldplatz",
-            "Oberer Stadtplatz",
+            # "Alt-Hafen",
+            # "Graflinger Tal",
+            # "Schaching",
+            # "Hafen",
+            # "Vorstadt",
+            # "Stadtmitte",
+            # "Luitpoldplatz",
+            # "Oberer Stadtplatz",
         ]
               ] + [
                   WebcamStream.from_storage(
                       town,
                       "Bahnhof",
                       "1280x960",
-                      # snapshotter=snapshotter,
+                      snapshotter=snapshotter,
                       # detector=default_detector,
                       # annotator=annotator,
                   )
@@ -53,8 +59,48 @@ if __name__ == "__main__":
               ] + [
                   WebcamStream.from_storage(
                       "Deggendorf",
+                      "Stadtmitte",
+                      "1280x960",
+                      filter=difference_filter,
+                  )
+                  for difference_filter in [
+            DifferenceFilter(
+                mode="display_only",
+                nth_last_image=1,
+                grayscale_output=True,
+            ),
+            DifferenceFilter(
+                mode="display_only",
+                nth_last_image=2,
+                grayscale_output=True,
+            ),
+            DifferenceFilter(
+                mode="display_only",
+                nth_last_image=5,
+                grayscale_output=True,
+            ),
+            DifferenceFilter(
+                mode="display_only",
+                nth_last_image=8,
+                grayscale_output=True,
+            ),
+            DifferenceFilter(
+                mode="display_only",
+                nth_last_image=10,
+                grayscale_output=True,
+            ),
+            DifferenceFilter(
+                mode="display_only",
+                nth_last_image=15,
+                grayscale_output=True,
+            ),
+        ]
+              ] + [
+                  WebcamStream.from_storage(
+                      "Deggendorf",
                       "Luitpoldplatz",
                       "1280x960",
+                      # filter=difference_filter,
                       detector=detector,
                       annotator=annotator,
                   )

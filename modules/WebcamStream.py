@@ -10,6 +10,7 @@ import cv2
 
 from modules.DetectionAnnotator import DetectionAnnotator
 from modules.DebugPlotter import DebugPlotter
+from modules.ImageFilter import DifferenceFilter, StreamFilter
 from modules.ImageUrlCapture import ImageUrlCapture
 from modules.ObjectDetector import TrackedObjectDetector
 from modules.Snapshotter import Snapshotter
@@ -30,16 +31,18 @@ class WebcamStream:
         max_buffer_size: int = MAX_BUFFER_SIZE,
         detector: Optional[TrackedObjectDetector] = None,
         annotator: Optional[DetectionAnnotator] = None,
+        filter: Optional[StreamFilter] = None,
         debug_plotter: Optional[DebugPlotter] = None,
         snapshotter: Optional[Snapshotter] = None,
         town: Optional[str] = None,
         location: Optional[str] = None,
     ) -> None:
         self.url = url
-        self.window_name = window_name or url
         self.buffer = WebcamBuffer(max_buffer_size)
         self.detector = detector
         self.annotator = annotator
+        self.filter = filter
+        self.window_name = self._format_window_name(window_name or url)
         self.debug_plotter = debug_plotter
         self.snapshotter = snapshotter
         self.town = town
@@ -66,6 +69,7 @@ class WebcamStream:
         max_buffer_size: int = MAX_BUFFER_SIZE,
         detector: Optional[TrackedObjectDetector] = None,
         annotator: Optional[DetectionAnnotator] = None,
+        filter: Optional[StreamFilter] = None,
         debug_plotter: Optional[DebugPlotter] = None,
         snapshotter: Optional[Snapshotter] = None,
     ) -> "WebcamStream":
@@ -77,6 +81,7 @@ class WebcamStream:
             max_buffer_size=max_buffer_size,
             detector=detector,
             annotator=annotator,
+            filter=filter,
             debug_plotter=debug_plotter,
             snapshotter=snapshotter,
             town=town,
@@ -106,6 +111,8 @@ class WebcamStream:
         self.display_fps_ema = None
         if self.detector is not None:
             self.detector.reset()
+        if self.filter is not None:
+            self.filter.reset()
 
         self.reader_thread = threading.Thread(
             target=self._read_frames_into_buffer,
@@ -154,7 +161,9 @@ class WebcamStream:
 
     def show(self) -> None:
         window_created = False
+        auxiliary_window_created = False
         window_sized = False
+        auxiliary_window_sized = False
 
         if not self.is_open:
             self.open()
@@ -167,15 +176,27 @@ class WebcamStream:
             window_created = True
 
             while not self.stop_event.is_set():
-                current_frame, wait_time_ms, fps = self._next_display_frame()
+                current_stream_frame, wait_time_ms, fps = self._next_display_frame()
 
                 with self._highgui_lock:
-                    if current_frame is not None:
+                    if current_stream_frame is not None:
+                        current_frame = current_stream_frame.annotated_frame
                         self._draw_overlay(current_frame, fps)
                         if not window_sized:
                             self._size_window_for_frame(self.window_name, current_frame)
                             window_sized = True
                         cv2.imshow(self.window_name, current_frame)
+
+                        auxiliary_frame = current_stream_frame.auxiliary_frame
+                        if auxiliary_frame is not None:
+                            auxiliary_window_name = self._auxiliary_window_name()
+                            if not auxiliary_window_created:
+                                cv2.namedWindow(auxiliary_window_name, cv2.WINDOW_NORMAL)
+                                auxiliary_window_created = True
+                            if not auxiliary_window_sized:
+                                self._size_window_for_frame(auxiliary_window_name, auxiliary_frame)
+                                auxiliary_window_sized = True
+                            cv2.imshow(auxiliary_window_name, auxiliary_frame)
 
                     key = cv2.waitKey(wait_time_ms) & 0xFF
 
@@ -189,6 +210,11 @@ class WebcamStream:
                         cv2.destroyWindow(self.window_name)
                     except cv2.error:
                         pass
+                    if auxiliary_window_created:
+                        try:
+                            cv2.destroyWindow(self._auxiliary_window_name())
+                        except cv2.error:
+                            pass
             if threading.current_thread() is self.display_thread:
                 self.display_thread = None
 
@@ -265,6 +291,7 @@ class WebcamStream:
             "location": self.location,
             "detector": self._detector_process_spec(),
             "annotator": self._annotator_process_spec(),
+            "filter": self._filter_process_spec(),
             "debug_plotter": self._debug_plotter_process_spec(),
             "snapshotter": self._snapshotter_process_spec(),
         }
@@ -301,6 +328,20 @@ class WebcamStream:
             "trail_point_fade_frames": self.annotator.trail_point_fade_frames,
         }
 
+    def _filter_process_spec(self) -> Optional[Dict[str, Any]]:
+        if self.filter is None:
+            return None
+
+        if isinstance(self.filter, DifferenceFilter):
+            return {
+                "type": "difference",
+                "mode": self.filter.mode,
+                "nth_last_image": self.filter.nth_last_image,
+                "grayscale_output": self.filter.grayscale_output,
+            }
+
+        raise TypeError(f"Unsupported filter type: {type(self.filter).__name__}")
+
     def _debug_plotter_process_spec(self) -> Optional[Dict[str, Any]]:
         if self.debug_plotter is None:
             return None
@@ -324,6 +365,7 @@ class WebcamStream:
     def _isolate_stream_contexts(streams: Iterable["WebcamStream"]) -> None:
         detector_ids = set()
         annotator_ids = set()
+        filter_ids = set()
 
         for stream in streams:
             if stream.detector is not None:
@@ -340,7 +382,14 @@ class WebcamStream:
                 else:
                     annotator_ids.add(annotator_id)
 
-    def _next_display_frame(self) -> Tuple[Optional[RawFrame], int, float]:
+            if stream.filter is not None:
+                filter_id = id(stream.filter)
+                if filter_id in filter_ids:
+                    stream.filter = stream.filter.clone()
+                else:
+                    filter_ids.add(filter_id)
+
+    def _next_display_frame(self) -> Tuple[Optional[StreamFrame], int, float]:
         iteration_start_time = time.monotonic()
         current_stream_frame, current_queue_size = self.buffer.pop()
         if current_stream_frame is None:
@@ -365,7 +414,7 @@ class WebcamStream:
             delay_ms=wait_time_ms,
         )
 
-        return current_frame, wait_time_ms, fps
+        return current_stream_frame, wait_time_ms, fps
 
     def _record_display_timing(self) -> float:
         current_time = time.monotonic()
@@ -406,17 +455,30 @@ class WebcamStream:
         timestamp = time.monotonic()
         detections = ()
         active_trails = ()
+        filtered_frame = None
+        detector_frame = frame
         annotated_frame = frame
+        auxiliary_frame = None
+
+        if self.filter is not None:
+            filtered_frame = self.filter.apply(frame)
+            if self.filter.uses_for_inference:
+                detector_frame = filtered_frame
+                annotated_frame = filtered_frame
+            elif self.filter.shows_auxiliary_window:
+                auxiliary_frame = filtered_frame
 
         if self.detector is not None:
-            detections = self.detector.detect(frame, timestamp=timestamp)
+            detections = self.detector.detect(detector_frame, timestamp=timestamp)
             active_trails = self.detector.active_trails(timestamp=timestamp)
             if self.annotator is not None:
-                annotated_frame = self.annotator.annotate(frame, detections, active_trails)
+                annotated_frame = self.annotator.annotate(annotated_frame, detections, active_trails)
 
         return StreamFrame(
             raw_frame=frame,
+            filtered_frame=filtered_frame,
             annotated_frame=annotated_frame,
+            auxiliary_frame=auxiliary_frame,
             detections=detections,
             active_trails=active_trails,
             timestamp=timestamp,
@@ -600,10 +662,20 @@ class WebcamStream:
             cv2.LINE_AA,
         )
 
+    def _auxiliary_window_name(self) -> str:
+        return f"{self.window_name} Filter"
+
+    def _format_window_name(self, base_window_name: str) -> str:
+        if self.filter is None:
+            return base_window_name
+
+        return f"{base_window_name} {self.filter.display_name()}"
+
 
 def _run_isolated_stream_process(stream_spec: Dict[str, Any], duration_seconds: Optional[float]) -> None:
     detector = _build_detector_from_process_spec(stream_spec.get("detector"))
     annotator = _build_annotator_from_process_spec(stream_spec.get("annotator"))
+    image_filter = _build_filter_from_process_spec(stream_spec.get("filter"))
     debug_plotter = _build_debug_plotter_from_process_spec(stream_spec.get("debug_plotter"))
     snapshotter = _build_snapshotter_from_process_spec(stream_spec.get("snapshotter"))
     stream = WebcamStream(
@@ -612,6 +684,7 @@ def _run_isolated_stream_process(stream_spec: Dict[str, Any], duration_seconds: 
         max_buffer_size=stream_spec.get("max_buffer_size", MAX_BUFFER_SIZE),
         detector=detector,
         annotator=annotator,
+        filter=image_filter,
         debug_plotter=debug_plotter,
         snapshotter=snapshotter,
         town=stream_spec.get("town"),
@@ -649,6 +722,18 @@ def _build_debug_plotter_from_process_spec(debug_plotter_spec: Optional[Dict[str
         return None
 
     return DebugPlotter(**debug_plotter_spec)
+
+
+def _build_filter_from_process_spec(filter_spec: Optional[Dict[str, Any]]) -> Optional[StreamFilter]:
+    if filter_spec is None:
+        return None
+
+    filter_type = filter_spec.get("type")
+    filter_parameters = {key: value for key, value in filter_spec.items() if key != "type"}
+    if filter_type == "difference":
+        return DifferenceFilter(**filter_parameters)
+
+    raise ValueError(f"Unsupported filter process spec type: {filter_type}")
 
 
 def _build_snapshotter_from_process_spec(snapshotter_spec: Optional[Dict[str, Any]]) -> Optional[Snapshotter]:

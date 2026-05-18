@@ -35,7 +35,9 @@ class TrackedTrail:
 @dataclass(frozen=True)
 class StreamFrame:
     raw_frame: RawFrame
+    filtered_frame: Optional[RawFrame]
     annotated_frame: RawFrame
+    auxiliary_frame: Optional[RawFrame]
     detections: Tuple[Detection, ...]
     active_trails: Tuple[TrackedTrail, ...]
     timestamp: float
