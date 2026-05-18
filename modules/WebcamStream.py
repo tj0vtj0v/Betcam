@@ -42,7 +42,8 @@ class WebcamStream:
         self.detector = detector
         self.annotator = annotator
         self.filter = filter
-        self.window_name = self._format_window_name(window_name or url)
+        self.base_window_name = window_name or url
+        self.window_name = self._format_window_name(self.base_window_name)
         self.debug_plotter = debug_plotter
         self.snapshotter = snapshotter
         self.town = town
@@ -285,7 +286,7 @@ class WebcamStream:
     def _to_process_spec(self) -> Dict[str, Any]:
         return {
             "url": self.url,
-            "window_name": self.window_name,
+            "window_name": self.base_window_name,
             "max_buffer_size": self.buffer.frames.maxlen or MAX_BUFFER_SIZE,
             "town": self.town,
             "location": self.location,
@@ -335,7 +336,7 @@ class WebcamStream:
         if isinstance(self.filter, DifferenceFilter):
             return {
                 "type": "difference",
-                "mode": self.filter.mode,
+                "use_for_inference": self.filter.use_for_inference,
                 "nth_last_image": self.filter.nth_last_image,
                 "grayscale_output": self.filter.grayscale_output,
             }

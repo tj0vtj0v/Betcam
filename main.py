@@ -5,7 +5,7 @@ if __name__ == "__main__":
         save_every_n_frames=100
     )
     default_detector = TrackedObjectDetector(  # best
-        model_path="yolo26s_960_finetune.pt",
+        model_path="yolo26n_960_finetune.pt",
         model_input_size=1280,
         detection_confidence_threshold=0.2,
         track_history_timeout_seconds=5.0,
@@ -18,9 +18,9 @@ if __name__ == "__main__":
         trail_point_fade_frames=100
     )
     default_filter = DifferenceFilter(
-        mode="display_only",
-        nth_last_image=1,
-        grayscale_output=True,
+        use_for_inference=False,
+        nth_last_image=2,
+        grayscale_output=False,
     )
 
     streams = [
@@ -39,7 +39,7 @@ if __name__ == "__main__":
             # "Schaching",
             # "Hafen",
             # "Vorstadt",
-            # "Stadtmitte",
+            "Stadtmitte",
             # "Luitpoldplatz",
             # "Oberer Stadtplatz",
         ]
@@ -64,36 +64,31 @@ if __name__ == "__main__":
                       filter=difference_filter,
                   )
                   for difference_filter in [
-            DifferenceFilter(
-                mode="display_only",
-                nth_last_image=1,
-                grayscale_output=True,
-            ),
-            DifferenceFilter(
-                mode="display_only",
-                nth_last_image=2,
-                grayscale_output=True,
-            ),
-            DifferenceFilter(
-                mode="display_only",
-                nth_last_image=5,
-                grayscale_output=True,
-            ),
-            DifferenceFilter(
-                mode="display_only",
-                nth_last_image=8,
-                grayscale_output=True,
-            ),
-            DifferenceFilter(
-                mode="display_only",
-                nth_last_image=10,
-                grayscale_output=True,
-            ),
-            DifferenceFilter(
-                mode="display_only",
-                nth_last_image=15,
-                grayscale_output=True,
-            ),
+            # DifferenceFilter( # bissi noisy. pixelwise changes arent that stable
+            #     use_for_inference=True,
+            #     nth_last_image=1,
+            #     grayscale_output=False,
+            # ),
+            # DifferenceFilter( # clear, great for cars
+            #     use_for_inference=True,
+            #     nth_last_image=2,
+            #     grayscale_output=False,
+            # ),
+            # DifferenceFilter( # clear edges even for slow changes but partly too much distance
+            #     use_for_inference=True,
+            #     nth_last_image=5,
+            #     grayscale_output=False,
+            # ),
+            # DifferenceFilter( # most double, cloud changes get visible
+            #     use_for_inference=True,
+            #     nth_last_image=10,
+            #     grayscale_output=False,
+            # ),
+            # DifferenceFilter( # everything is double
+            #     use_for_inference=True,
+            #     nth_last_image=15,
+            #     grayscale_output=False,
+            # ),
         ]
               ] + [
                   WebcamStream.from_storage(

@@ -1,29 +1,25 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Deque, Literal
+from typing import Deque
 
 import cv2
 import numpy as np
 
 from config.types import RawFrame
 
-FilterMode = Literal["display_only", "inference"]
-
 
 class StreamFilter:
-    def __init__(self, *, mode: FilterMode = "display_only") -> None:
-        if mode not in {"display_only", "inference"}:
-            raise ValueError("mode must be either 'display_only' or 'inference'.")
-        self.mode = mode
+    def __init__(self, *, use_for_inference: bool = False) -> None:
+        self.use_for_inference = use_for_inference
 
     @property
     def shows_auxiliary_window(self) -> bool:
-        return self.mode == "display_only"
+        return not self.use_for_inference
 
     @property
     def uses_for_inference(self) -> bool:
-        return self.mode == "inference"
+        return self.use_for_inference
 
     def apply(self, frame: RawFrame) -> RawFrame:
         raise NotImplementedError
@@ -42,11 +38,11 @@ class DifferenceFilter(StreamFilter):
     def __init__(
         self,
         *,
-        mode: FilterMode = "display_only",
+        use_for_inference: bool = False,
         nth_last_image: int = 1,
         grayscale_output: bool = False,
     ) -> None:
-        super().__init__(mode=mode)
+        super().__init__(use_for_inference=use_for_inference)
         if nth_last_image <= 0:
             raise ValueError("nth_last_image must be greater than 0.")
 
@@ -65,7 +61,7 @@ class DifferenceFilter(StreamFilter):
 
     def clone(self) -> "DifferenceFilter":
         return DifferenceFilter(
-            mode=self.mode,
+            use_for_inference=self.use_for_inference,
             nth_last_image=self.nth_last_image,
             grayscale_output=self.grayscale_output,
         )
