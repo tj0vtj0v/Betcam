@@ -6,10 +6,10 @@ model_variant: 26m
 
 data: finetuning/training/data.yaml
 
-epochs: 200 # Longer schedule makes better use of the GPU while still allowing early stopping.
-patience: 32 # Give validation more time before stopping on temporary plateaus.
-batch: 8 # Strong default for a 12 GB RTX 4070 Ti with a small YOLO variant at 960 px.
-imgsz: 1280 # Better small-object detail than 640 without the training cost of 1280.
+epochs: 1000 # Longer schedule makes better use of the GPU while still allowing early stopping.
+patience: 100 # Give validation more time before stopping on temporary plateaus.
+batch: 12 # Strong default for a 12 GB RTX 4070 Ti with a small YOLO variant at 960 px.
+imgsz: 960 # Better small-object detail than 640 without the training cost of 1280.
 
 device: 0 # Use the first CUDA device.
 workers: 8 # Keep the GPU fed without oversubscribing Windows too aggressively.
@@ -24,23 +24,27 @@ amp: true # Mixed precision improves throughput and memory use on NVIDIA GPUs.
 cache: ram # Faster epoch-to-epoch training if the dataset fits in system memory.
 plots: true
 val: true
+save: true
+save_period: -1 # Auto-save only the best model to save disk space.
 
 lr0: 0.0005
-lrf: 0.05
+lrf: 0.02
 weight_decay: 0.0005
-warmup_epochs: 3.0
-close_mosaic: 10 # Turn mosaic off near the end so the model finishes on more natural images.
+warmup_epochs: 5.0
+warmup_momentum: 0.8
+warmup_bias_lr: 0.03
+close_mosaic: 40
 
 hsv_h: 0.015 # Hue jitter.
 hsv_s: 0.5 # Saturation jitter.
 hsv_v: 0.3 # Brightness jitter.
 degrees: 5.0 # Small rotation helps camera-angle robustness without distorting objects too much.
 translate: 0.08 # Small random shifts.
-scale: 0.3 # Mild zoom in/out.
-shear: 0.5 # Mild shear only.
+scale: 0.15 # Mild zoom in/out.
+shear: 0.1 # Mild shear only.
 perspective: 0.0 # Keep off unless you know viewpoint distortion is a real issue.
 flipud: 0.0 # Vertical flips are usually wrong for this type of imagery.
 fliplr: 0.5 # Horizontal flips are usually safe.
 mosaic: 0.5 # Stronger composition augmentation is affordable with the GPU and helps smaller datasets.
 mixup: 0.0 # Off by default; can hurt detection quality on small custom datasets.
-erasing: 0.1 # Mild occlusion robustness.
+erasing: 0.02 # Mild occlusion robustness.

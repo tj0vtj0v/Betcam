@@ -7,16 +7,6 @@
 6 train
 7 truck
 8 boat
-9 traffic light
-10 stop sign
-11 parking meter
-12 bird
-13 cat
-14 dog
-15 horse
-16 sheep
-17 cow
-18 elephant
-19 bear
-20 zebra
-21 giraffe
+9 cat
+10 dog
+11 cow

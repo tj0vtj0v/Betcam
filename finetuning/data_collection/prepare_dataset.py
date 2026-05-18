@@ -40,8 +40,6 @@ def main() -> None:
     class_id_by_name = {name: index for index, name in enumerate(class_names)}
 
     image_paths = list_images(SOURCE_DIR)
-    if not image_paths:
-        raise RuntimeError(f"No images found in '{SOURCE_DIR}'.")
 
     train_images_dir = DATASET_DIR / "images" / "train"
     val_images_dir = DATASET_DIR / "images" / "val"
@@ -78,6 +76,28 @@ def main() -> None:
         device=INFERENCE_DEVICE,
         batch=INFERENCE_BATCH,
     )
+    fill_missing_labels_for_split(
+        model=model,
+        images_dir=train_images_dir,
+        labels_dir=train_labels_dir,
+        class_id_by_name=class_id_by_name,
+        imgsz=INFERENCE_IMGSZ,
+        conf=INFERENCE_CONF,
+        iou=INFERENCE_IOU,
+        device=INFERENCE_DEVICE,
+        batch=INFERENCE_BATCH,
+    )
+    fill_missing_labels_for_split(
+        model=model,
+        images_dir=val_images_dir,
+        labels_dir=val_labels_dir,
+        class_id_by_name=class_id_by_name,
+        imgsz=INFERENCE_IMGSZ,
+        conf=INFERENCE_CONF,
+        iou=INFERENCE_IOU,
+        device=INFERENCE_DEVICE,
+        batch=INFERENCE_BATCH,
+    )
 
     print(f"Prepared {len(copied_train)} train images and {len(copied_val)} val images.")
     print(f"Labels written under '{DATASET_DIR / 'labels'}'.")
@@ -85,7 +105,7 @@ def main() -> None:
 
 def validate_configuration() -> None:
     if not SOURCE_DIR.exists():
-        raise FileNotFoundError(f"Source directory does not exist: {SOURCE_DIR}")
+        SOURCE_DIR.mkdir(parents=True, exist_ok=True)
     if not DATA_YAML_PATH.exists():
         raise FileNotFoundError(f"data.yaml not found: {DATA_YAML_PATH}")
     if not MODEL_PATH.exists():
@@ -213,6 +233,47 @@ def write_labels_for_split(
         label_path = output_dir / f"{image_path.stem}.txt"
         lines = list(format_result_lines(result, class_id_by_name))
         label_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def fill_missing_labels_for_split(
+    *,
+    model: YOLO,
+    images_dir: Path,
+    labels_dir: Path,
+    class_id_by_name: dict[str, int],
+    imgsz: int,
+    conf: float,
+    iou: float,
+    device: str,
+    batch: int,
+) -> None:
+    missing_image_paths = list_images_missing_labels(images_dir, labels_dir)
+    if not missing_image_paths:
+        return
+
+    write_labels_for_split(
+        model=model,
+        image_paths=missing_image_paths,
+        output_dir=labels_dir,
+        class_id_by_name=class_id_by_name,
+        imgsz=imgsz,
+        conf=conf,
+        iou=iou,
+        device=device,
+        batch=batch,
+    )
+
+
+def list_images_missing_labels(images_dir: Path, labels_dir: Path) -> List[Path]:
+    missing_image_paths: List[Path] = []
+
+    for image_path in list_images(images_dir):
+        label_path = labels_dir / f"{image_path.stem}.txt"
+        if label_path.exists():
+            continue
+        missing_image_paths.append(image_path)
+
+    return missing_image_paths
 
 
 def format_result_lines(result: object, class_id_by_name: dict[str, int]) -> Iterable[str]:
