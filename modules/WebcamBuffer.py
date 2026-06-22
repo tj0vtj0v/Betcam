@@ -1,7 +1,7 @@
 import threading
 import time
 from collections import deque
-from typing import Deque, Optional, Tuple
+from typing import Any, Deque, Optional, Tuple
 
 from config.config import (
     MAX_BUFFER_SIZE,
@@ -10,12 +10,12 @@ from config.config import (
     QUEUE_SAMPLE_WINDOW_SECONDS,
     TARGET_BUFFER_SIZE,
 )
-from config.types import QueueSample, StreamFrame
+from config.types import QueueSample
 
 
 class WebcamBuffer:
     def __init__(self, max_size: int = MAX_BUFFER_SIZE) -> None:
-        self.frames: Deque[StreamFrame] = deque(maxlen=max_size)
+        self.frames: Deque[Any] = deque(maxlen=max_size)
         self.queue_size_samples: Deque[QueueSample] = deque()
         self.lock = threading.Lock()
 
@@ -24,18 +24,18 @@ class WebcamBuffer:
             self.queue_size_samples.clear()
             self.frames.clear()
 
-    def append(self, frame: StreamFrame) -> None:
+    def append(self, frame: Any) -> None:
         with self.lock:
             self.frames.append(frame)
 
-    def pop(self) -> Tuple[Optional[StreamFrame], int]:
+    def pop(self) -> Tuple[Optional[Any], int]:
         with self.lock:
             frame = self.frames.popleft() if self.frames else None
             queue_size = len(self.frames)
 
         return frame, queue_size
 
-    def read(self) -> Optional[StreamFrame]:
+    def read(self) -> Optional[Any]:
         frame, _ = self.pop()
         return frame
 

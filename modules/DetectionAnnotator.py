@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import colorsys
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 import cv2
 
-from config.types import Detection, RawFrame, TrackedTrail, TrailPoint
+from config.types import Detection, DetectionResult, RawFrame, TrackedTrail, TrailPoint
+from modules.FrameProcessor import FrameProcessor
 
 Color = Tuple[int, int, int]
 
 
-class DetectionAnnotator:
+class DetectionAnnotator(FrameProcessor):
     CATEGORY_HUES: Dict[str, float] = {
         "people": 0.08,
         "animals": 0.33,
@@ -19,24 +20,39 @@ class DetectionAnnotator:
 
     def __init__(
         self,
+        detection_result: DetectionResult,
         *,
         show_labels: bool = True,
         label_font_scale: float = 0.4,
         trail_thickness: int = 2,
         trail_point_fade_frames: int = 0,
+        show_result: bool = False,
+        return_result: bool = True,
     ) -> None:
+        super().__init__(show_result=show_result, return_result=return_result)
+        if not isinstance(detection_result, DetectionResult):
+            raise TypeError("detection_result must be a DetectionResult instance.")
+        self.detection_result = detection_result
         self.show_labels = show_labels
         self.label_font_scale = label_font_scale
         self.trail_thickness = trail_thickness
         self.trail_point_fade_frames = trail_point_fade_frames
 
-    def clone(self) -> "DetectionAnnotator":
-        return DetectionAnnotator(
-            show_labels=self.show_labels,
-            label_font_scale=self.label_font_scale,
-            trail_thickness=self.trail_thickness,
-            trail_point_fade_frames=self.trail_point_fade_frames,
+    def __call__(self, image: RawFrame) -> RawFrame:
+        return self.annotate(
+            image,
+            self.detection_result.detections,
+            self.detection_result.active_trails,
         )
+
+    def construction_settings(self) -> Dict[str, Any]:
+        return {
+            "detection_result": self.detection_result,
+            "show_labels": self.show_labels,
+            "label_font_scale": self.label_font_scale,
+            "trail_thickness": self.trail_thickness,
+            "trail_point_fade_frames": self.trail_point_fade_frames,
+        }
 
     def annotate(
         self,
@@ -44,10 +60,9 @@ class DetectionAnnotator:
         detections: Tuple[Detection, ...],
         active_trails: Tuple[TrackedTrail, ...],
     ) -> RawFrame:
-        if not detections and not active_trails:
-            return frame
-
         annotated_frame = frame.copy()
+        if not detections and not active_trails:
+            return annotated_frame
 
         for trail in active_trails:
             if len(trail.points) >= 2:

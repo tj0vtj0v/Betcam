@@ -7,11 +7,12 @@ import subprocess
 from math import ceil
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import cv2
 
-from config.types import Detection, Point, RawFrame, TrackedTrail, TrailPoint
+from config.types import Detection, DetectionResult, Point, RawFrame, TrackedTrail, TrailPoint
+from modules.FrameProcessor import FrameProcessor
 
 ANIMAL_CLASS_NAMES = {
     "bird",
@@ -63,9 +64,10 @@ class DetectionCandidate:
     bounding_box: Tuple[int, int, int, int]
 
 
-class TrackedObjectDetector:
+class TrackedObjectDetector(FrameProcessor):
     def __init__(
         self,
+        detection_result: DetectionResult,
         *,
         model_path: str = "yolo11s.pt",
         inference_device: str = "auto",
@@ -77,11 +79,15 @@ class TrackedObjectDetector:
         max_track_history_points: int = 256,
         max_inference_frame_dimension: int = 480,
         fixed_inference_frame_budget_ms: int = 30,
-        max_frames_to_skip_after_inference: int = 5,
         inference_time_ema_alpha: float = 0.3,
         same_class_iou_suppression_threshold: float = 0.5,
         allowed_class_names: Optional[Iterable[str]] = None,
+        show_result: bool = False,
+        return_result: bool = True,
     ) -> None:
+        super().__init__(show_result=show_result, return_result=return_result)
+        if not isinstance(detection_result, DetectionResult):
+            raise TypeError("detection_result must be a DetectionResult instance.")
         if model_input_size <= 0:
             raise ValueError("model_input_size must be greater than 0.")
         if not inference_device:
@@ -98,13 +104,12 @@ class TrackedObjectDetector:
             raise ValueError("max_inference_frame_dimension must be greater than 0.")
         if fixed_inference_frame_budget_ms <= 0:
             raise ValueError("fixed_inference_frame_budget_ms must be greater than 0.")
-        if max_frames_to_skip_after_inference < 0:
-            raise ValueError("max_frames_to_skip_after_inference must be non-negative.")
         if not 0 < inference_time_ema_alpha <= 1:
             raise ValueError("inference_time_ema_alpha must be in the range (0, 1].")
         if not 0 <= same_class_iou_suppression_threshold <= 1:
             raise ValueError("same_class_iou_suppression_threshold must be in the range [0, 1].")
 
+        self.detection_result = detection_result
         self.model_path = model_path
         self.inference_device = inference_device
         self.model_input_size = model_input_size
@@ -115,7 +120,6 @@ class TrackedObjectDetector:
         self.max_track_history_points = max_track_history_points
         self.max_inference_frame_dimension = max_inference_frame_dimension
         self.fixed_inference_frame_budget_ms = fixed_inference_frame_budget_ms
-        self.max_frames_to_skip_after_inference = max_frames_to_skip_after_inference
         self.inference_time_ema_alpha = inference_time_ema_alpha
         self.same_class_iou_suppression_threshold = same_class_iou_suppression_threshold
         self.allowed_class_names = set(allowed_class_names or ALLOWED_CLASS_NAMES)
@@ -126,57 +130,152 @@ class TrackedObjectDetector:
         self._gpu_hardware_names: Optional[Tuple[str, ...]] = None
         self._track_states: Dict[int, TrackState] = {}
         self._cached_detections: Tuple[Detection, ...] = ()
-        self._frames_until_next_inference = 0
         self._average_inference_seconds: Optional[float] = None
+        self._frames_until_next_inference = 0
+        self._frames_passed_during_inference = 0
+        self._inference_in_progress = False
+        self._inference_generation = 0
+        self._pending_inference: Optional[Tuple[RawFrame, float, int]] = None
+        self._inference_condition = threading.Condition()
+        self._inference_worker_thread: Optional[threading.Thread] = None
+        self._detector_state_lock = threading.Lock()
         self._detection_enabled_at_timestamp: Optional[float] = None
         self._model_preload_started = False
         self._model_preload_thread: Optional[threading.Thread] = None
+        self._model_ready = threading.Event()
+        self._model_preload_lock = threading.Lock()
+        self._model_load_error: Optional[BaseException] = None
 
-    def clone(self) -> "TrackedObjectDetector":
-        return TrackedObjectDetector(
-            model_path=self.model_path,
-            inference_device=self.inference_device,
-            model_input_size=self.model_input_size,
-            detection_confidence_threshold=self.detection_confidence_threshold,
-            tracker_config_path=self.tracker_config_path,
-            detection_start_delay_seconds=self.detection_start_delay_seconds,
-            track_history_timeout_seconds=self.track_history_timeout_seconds,
-            max_track_history_points=self.max_track_history_points,
-            max_inference_frame_dimension=self.max_inference_frame_dimension,
-            fixed_inference_frame_budget_ms=self.fixed_inference_frame_budget_ms,
-            max_frames_to_skip_after_inference=self.max_frames_to_skip_after_inference,
-            inference_time_ema_alpha=self.inference_time_ema_alpha,
-            same_class_iou_suppression_threshold=self.same_class_iou_suppression_threshold,
-            allowed_class_names=tuple(self.allowed_class_names),
-        )
+    def construction_settings(self) -> Dict[str, Any]:
+        return {
+            "detection_result": self.detection_result,
+            "model_path": self.model_path,
+            "inference_device": self.inference_device,
+            "model_input_size": self.model_input_size,
+            "detection_confidence_threshold": self.detection_confidence_threshold,
+            "tracker_config_path": self.tracker_config_path,
+            "detection_start_delay_seconds": self.detection_start_delay_seconds,
+            "track_history_timeout_seconds": self.track_history_timeout_seconds,
+            "max_track_history_points": self.max_track_history_points,
+            "max_inference_frame_dimension": self.max_inference_frame_dimension,
+            "fixed_inference_frame_budget_ms": self.fixed_inference_frame_budget_ms,
+            "inference_time_ema_alpha": self.inference_time_ema_alpha,
+            "same_class_iou_suppression_threshold": self.same_class_iou_suppression_threshold,
+            "allowed_class_names": tuple(self.allowed_class_names),
+        }
+
+    def __call__(self, image: RawFrame) -> RawFrame:
+        self._ensure_inference_worker()
+        with self._inference_condition:
+            if self._inference_in_progress:
+                self._frames_passed_during_inference += 1
+                return image
+            if self._frames_until_next_inference > 0:
+                self._frames_until_next_inference -= 1
+                return image
+
+            self._inference_in_progress = True
+            self._frames_passed_during_inference = 0
+            self._pending_inference = (
+                image.copy(),
+                time.monotonic(),
+                self._inference_generation,
+            )
+            self._inference_condition.notify()
+        return image
 
     def reset(self) -> None:
-        self._track_states.clear()
-        self._cached_detections = ()
-        self._frames_until_next_inference = 0
-        self._average_inference_seconds = None
-        self._detection_enabled_at_timestamp = time.monotonic() + self.detection_start_delay_seconds
+        with self._inference_condition:
+            self._inference_generation += 1
+            self._pending_inference = None
+            self._inference_in_progress = False
+            self._frames_passed_during_inference = 0
+            self._frames_until_next_inference = 0
+        with self._detector_state_lock:
+            self.detection_result.replace((), ())
+            self._track_states.clear()
+            self._cached_detections = ()
+            self._average_inference_seconds = None
+            self._detection_enabled_at_timestamp = time.monotonic() + self.detection_start_delay_seconds
+            if self._model_ready.is_set():
+                self._model.predictor = None
         self._ensure_model_preload()
-        if self._model is not None:
-            self._model.predictor = None
+        self._ensure_inference_worker()
+
+    def _ensure_inference_worker(self) -> None:
+        with self._inference_condition:
+            if self._inference_worker_thread is not None and self._inference_worker_thread.is_alive():
+                return
+            self._inference_worker_thread = threading.Thread(
+                target=self._inference_worker,
+                name=f"detector-worker-{self.model_path}",
+                daemon=True,
+            )
+            self._inference_worker_thread.start()
+
+    def _inference_worker(self) -> None:
+        while True:
+            with self._inference_condition:
+                while self._pending_inference is None:
+                    self._inference_condition.wait()
+                frame, timestamp, generation = self._pending_inference
+                self._pending_inference = None
+
+            started_at = time.monotonic()
+            try:
+                with self._detector_state_lock:
+                    detections = self.detect(frame, timestamp=timestamp)
+                    trails = self.active_trails(timestamp=timestamp)
+            except Exception as error:
+                print(f"Could not run detection model '{self.model_path}': {error}", file=sys.stderr)
+                detections, trails = (), ()
+            duration = time.monotonic() - started_at
+
+            with self._inference_condition:
+                if generation != self._inference_generation:
+                    continue
+                self._update_inference_cadence(duration)
+                self._inference_in_progress = False
+                self.detection_result.replace(detections, trails)
+
+    def _update_inference_cadence(self, inference_duration_seconds: float) -> None:
+        if self._average_inference_seconds is None:
+            self._average_inference_seconds = inference_duration_seconds
+        else:
+            alpha = self.inference_time_ema_alpha
+            self._average_inference_seconds = (
+                alpha * inference_duration_seconds
+                + (1 - alpha) * self._average_inference_seconds
+            )
+        interval = max(
+            1,
+            ceil(
+                (self._average_inference_seconds * 1000)
+                / self.fixed_inference_frame_budget_ms
+            ),
+        )
+        self._frames_until_next_inference = max(
+            0,
+            interval - 1 - self._frames_passed_during_inference,
+        )
 
     def detect(self, frame: RawFrame, *, timestamp: Optional[float] = None) -> Tuple[Detection, ...]:
         active_timestamp = time.monotonic() if timestamp is None else timestamp
         if not self._detection_is_enabled(active_timestamp):
             return ()
 
-        self._advance_trail_ages()
+        # Model initialization is intentionally kept off the stream reader
+        # thread. Until it finishes, return an unannotated frame immediately so
+        # video capture and display can continue normally.
+        self._ensure_model_preload()
+        if not self._model_ready.is_set():
+            return ()
 
-        if self._should_skip_inference():
-            self._prune_stale_tracks(active_timestamp)
-            self._frames_until_next_inference -= 1
-            return self._filter_cached_detections()
+        self._advance_trail_ages()
 
         model = self._get_model()
         allowed_class_ids = self._get_allowed_class_ids()
         inference_frame, scale_x, scale_y = self._prepare_inference_frame(frame)
-        inference_started_at = time.monotonic()
-
         results = model.track(
             inference_frame,
             imgsz=self.model_input_size,
@@ -187,11 +286,9 @@ class TrackedObjectDetector:
             persist=True,
             verbose=False,
         )
-        inference_duration_seconds = time.monotonic() - inference_started_at
         detections = self._parse_results(results, active_timestamp, scale_x=scale_x, scale_y=scale_y)
         self._prune_stale_tracks(active_timestamp)
         self._cached_detections = tuple(detections)
-        self._update_adaptive_skip_state(inference_duration_seconds)
         return self._cached_detections
 
     def active_trails(self, *, timestamp: Optional[float] = None) -> Tuple[TrackedTrail, ...]:
@@ -224,25 +321,32 @@ class TrackedObjectDetector:
         return self._model
 
     def _ensure_model_preload(self) -> None:
-        if self.detection_start_delay_seconds <= 0:
-            return
-        if self._model is not None or self._model_preload_started:
-            return
+        with self._model_preload_lock:
+            if self._model_ready.is_set() or self._model_preload_started or self._model_load_error is not None:
+                return
 
-        self._model_preload_started = True
-        self._model_preload_thread = threading.Thread(
-            target=self._preload_model,
-            daemon=True,
-        )
-        self._model_preload_thread.start()
+            self._model_preload_started = True
+            self._model_preload_thread = threading.Thread(
+                target=self._preload_model,
+                name=f"model-loader-{self.model_path}",
+                daemon=True,
+            )
+            self._model_preload_thread.start()
 
     def _preload_model(self) -> None:
         try:
             self._get_model()
             self._get_inference_device()
             self._get_allowed_class_ids()
-        except Exception:
-            self._model_preload_started = False
+        except Exception as error:
+            with self._model_preload_lock:
+                self._model_load_error = error
+            print(f"Could not load detection model '{self.model_path}': {error}", file=sys.stderr)
+        else:
+            self._model_ready.set()
+        finally:
+            with self._model_preload_lock:
+                self._model_preload_started = False
 
     def _get_allowed_class_ids(self) -> List[int]:
         if self._allowed_class_ids is not None:
@@ -508,30 +612,6 @@ class TrackedObjectDetector:
                 )
 
             state.points = aged_points
-
-    def _should_skip_inference(self) -> bool:
-        return self._frames_until_next_inference > 0 and self._average_inference_seconds is not None
-
-    def _update_adaptive_skip_state(self, inference_duration_seconds: float) -> None:
-        if self._average_inference_seconds is None:
-            self._average_inference_seconds = inference_duration_seconds
-        else:
-            alpha = self.inference_time_ema_alpha
-            self._average_inference_seconds = (
-                (alpha * inference_duration_seconds) + ((1 - alpha) * self._average_inference_seconds)
-            )
-
-        inference_time_ms = self._average_inference_seconds * 1000
-        inference_to_budget_ratio = inference_time_ms / self.fixed_inference_frame_budget_ms
-
-        if inference_to_budget_ratio <= 1:
-            self._frames_until_next_inference = 0
-            return
-
-        self._frames_until_next_inference = min(
-            self.max_frames_to_skip_after_inference,
-            ceil(inference_to_budget_ratio),
-        )
 
     def _filter_cached_detections(self) -> Tuple[Detection, ...]:
         active_track_ids = set(self._track_states)

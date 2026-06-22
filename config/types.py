@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional, Tuple
 
 RawFrame = Any
@@ -32,12 +32,17 @@ class TrackedTrail:
     points: Tuple[TrailPoint, ...]
 
 
-@dataclass(frozen=True)
-class StreamFrame:
-    raw_frame: RawFrame
-    filtered_frame: Optional[RawFrame]
-    annotated_frame: RawFrame
-    auxiliary_frame: Optional[RawFrame]
-    detections: Tuple[Detection, ...]
-    active_trails: Tuple[TrackedTrail, ...]
-    timestamp: float
+@dataclass
+class DetectionResult:
+    """Mutable per-frame output shared by a detector and its consumers."""
+
+    detections: Tuple[Detection, ...] = field(default_factory=tuple)
+    active_trails: Tuple[TrackedTrail, ...] = field(default_factory=tuple)
+
+    def replace(
+        self,
+        detections: Tuple[Detection, ...],
+        active_trails: Tuple[TrackedTrail, ...],
+    ) -> None:
+        self.detections = detections
+        self.active_trails = active_trails
